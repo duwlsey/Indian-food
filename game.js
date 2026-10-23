@@ -15,13 +15,13 @@ const foods = [
 ];
 const modes = [
   ['사진 보고 맞히기', '사진 속 음식의 이름을 함께 맞혀 보세요.'],
-  ['조각 뒤에 숨은 음식', '조각이 하나씩 사라지면 음식이 드러나요.'],
+  ['조각 뒤에 숨은 음식', '클릭할 때마다 조각이 하나씩 열려요.'],
   ['순간 포착', '빠르게 지나가는 음식. 놓쳤다면 다시 보세요.'],
 ];
 const app = document.querySelector('#app');
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
-let mode = 0, index = 0, revealed = false, order = [], timer, animation;
-let screen = 'home', paused = false, previousOrder = [];
+let mode = 0, index = 0, revealed = false, order = [], animation;
+let screen = 'home', previousOrder = [], tileOrder = [], uncovered = 0;
 try {
   const stored = JSON.parse(sessionStorage.getItem('india-quiz-last-order') || '[]');
   if (Array.isArray(stored) && stored.length === foods.length && new Set(stored).size === foods.length && stored.every(id => foods.some(f => f[0] === id))) previousOrder = stored;
@@ -48,7 +48,6 @@ function freshOrder() {
   return next;
 }
 function cleanup() {
-  clearInterval(timer);
   cancelAnimationFrame(animation);
 }
 function home() {
@@ -78,7 +77,8 @@ function showQuestion() {
   cleanup();
   screen = 'game';
   revealed = false;
-  paused = false;
+  tileOrder = [];
+  uncovered = 0;
   const food = order[index];
   app.innerHTML = `
     <div class="topline"><button class="quiet" id="home">← 단계 선택</button><h2>${mode + 1}단계 · ${modes[mode][0]}</h2><span class="progress">${String(index + 1).padStart(2, '0')} / ${order.length}</span></div>
@@ -89,41 +89,43 @@ function showQuestion() {
     </div>
     <div class="controls">
       <div class="control-group"><button class="quiet" id="prev" ${index === 0 ? 'disabled' : ''}>← 이전 문제</button><span class="help">클릭 또는 Space로 진행</span></div>
-      <div class="control-group">${mode === 1 ? '<button class="quiet" id="pause" aria-pressed="false">잠깐 멈춤</button>' : ''}${mode === 2 ? '<button class="quiet" id="replay">↻ 다시 보기</button>' : ''}<button class="primary" id="next">정답 보기 →</button></div>
+      <div class="control-group">${mode === 1 ? '<button class="quiet" id="uncover">조각 열기</button>' : ''}${mode === 2 ? '<button class="quiet" id="replay">↻ 다시 보기</button>' : ''}<button class="primary" id="next">정답 보기 →</button></div>
     </div>
-    <p class="hint" id="status" aria-live="polite">${mode === 1 ? '조각이 하나씩 사라져요. 어떤 음식일까요?' : mode === 2 ? '눈 크게 뜨고, 빠르게 지나가는 음식을 찾아보세요.' : '어떤 음식인지 함께 이야기해 보세요.'}</p>`;
+    <p class="hint" id="status" aria-live="polite">${mode === 1 ? '화면 클릭 또는 Space로 한 조각씩 열어 보세요. · 0 / 24' : mode === 2 ? '눈 크게 뜨고, 빠르게 지나가는 음식을 찾아보세요.' : '어떤 음식인지 함께 이야기해 보세요.'}</p>`;
   document.querySelector('#home').onclick = home;
   document.querySelector('#next').onclick = advance;
   document.querySelector('#prev').onclick = previous;
   const stage = document.querySelector('.stage');
   const image = document.querySelector('.food');
-  stage.onclick = advance;
+  stage.onclick = step;
   stage.onkeydown = event => {
-    if (event.key === 'Enter') { event.preventDefault(); advance(); }
+    if (event.key === 'Enter') { event.preventDefault(); step(); }
   };
   image.onerror = () => {
     cleanup();
     stage.innerHTML = '<div class="error">사진을 불러오지 못했어요.<br>새로고침하거나 다음 문제로 넘어가 주세요.</div>';
   };
   if (mode === 1) {
-    const tiles = shuffle([...document.querySelectorAll('.tile')]);
-    let n = 0;
-    timer = setInterval(() => {
-      if (!paused && n < tiles.length) tiles[n++].classList.add('gone');
-      if (n === tiles.length) clearInterval(timer);
-    }, 450);
-    const pause = document.querySelector('#pause');
-    pause.onclick = () => {
-      paused = !paused;
-      pause.textContent = paused ? '계속 보기' : '잠깐 멈춤';
-      pause.setAttribute('aria-pressed', String(paused));
-    };
+    tileOrder = shuffle([...document.querySelectorAll('.tile')]);
+    document.querySelector('#uncover').onclick = uncover;
   }
   if (mode === 2) {
     document.querySelector('#replay').onclick = fly;
     image.onload = () => { if (!revealed && screen === 'game' && mode === 2) fly(); };
     if (image.complete && image.naturalWidth) fly();
   }
+}
+function uncover() {
+  if (screen !== 'game' || mode !== 1 || revealed || uncovered >= tileOrder.length) return;
+  tileOrder[uncovered++].classList.add('gone');
+  document.querySelector('#status').textContent = uncovered === tileOrder.length
+    ? '사진이 모두 열렸어요. 어떤 음식일까요? 한 번 더 누르면 정답이 나와요.'
+    : `화면 클릭 또는 Space로 한 조각씩 열어 보세요. · ${uncovered} / ${tileOrder.length}`;
+  if (uncovered === tileOrder.length) document.querySelector('#uncover').disabled = true;
+}
+function step() {
+  if (screen === 'game' && mode === 1 && !revealed && uncovered < tileOrder.length) uncover();
+  else advance();
 }
 function fly() {
   if (screen !== 'game' || mode !== 2 || revealed) return;
@@ -167,7 +169,7 @@ function advance() {
     stage.insertAdjacentHTML('beforeend', `<div class="answer"><b>${order[index][1]}</b><span>${order[index][2]}</span></div>`);
     stage.setAttribute('aria-label', '정답. 클릭해서 다음 문제');
     document.querySelector('#next').textContent = index === order.length - 1 ? '단계 마치기 →' : '다음 문제 →';
-    document.querySelector('#pause')?.remove();
+    document.querySelector('#uncover')?.remove();
     document.querySelector('#replay')?.remove();
     document.querySelector('#status').textContent = `정답은 ${order[index][1]}. 한 번 더 누르면 ${index === order.length - 1 ? '단계를 마쳐요.' : '다음 음식이 나와요.'}`;
   } else {
@@ -188,8 +190,8 @@ function finish() {
   document.querySelector('#home').onclick = home;
 }
 window.addEventListener('keydown', event => {
-  if (event.repeat || event.altKey || event.ctrlKey || event.metaKey || (event.code === 'Space' && event.target.closest('button,a'))) return;
-  if (screen === 'game' && (event.code === 'Space' || event.key === 'ArrowRight')) { event.preventDefault(); advance(); }
+  if (event.repeat || event.altKey || event.ctrlKey || event.metaKey) return;
+  if (screen === 'game' && (event.code === 'Space' || event.key === 'ArrowRight')) { event.preventDefault(); step(); }
   if (screen === 'game' && event.key === 'ArrowLeft') { event.preventDefault(); previous(); }
   if (event.key === 'Escape' && !document.fullscreenElement) home();
 });
